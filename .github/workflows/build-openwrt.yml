@@ -1,192 +1,79 @@
-name: Build OpenWRT 24.10.4 with Custom Packages
-
+name: Build OpenWRT 24.10.4 Final (Last Chance)
 on:
-  push:
-    branches: [ main ]
-    paths:
-      - '.github/workflows/build-openwrt.yml'
-  pull_request:
   workflow_dispatch:
-
-env:
-  OPENWRT_VERSION: "v24.10.4"
-  TARGET_ARCH: "x86_64"
-  CUSTOM_CONFIG_FILE: ".config"
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
     - name: Checkout
       uses: actions/checkout@v4
       with:
         fetch-depth: 1
 
-    - name: Cleanup workspace
-      run: |
-        sudo rm -rf * .* || true
-
-    - name: Initialization environment
+    - name: 清理环境并安装依赖
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
+        sudo rm -rf /etc/apt/sources.list.d/*
         sudo apt-get -qq update
-        sudo apt-get -qq install -y \
-          build-essential \
-          libncurses5-dev \
-          libncursesw5-dev \
-          zlib1g-dev \
-          gawk \
-          git \
-          gettext \
-          libssl-dev \
-          xsltproc \
-          wget \
-          unzip \
-          python3 \
-          python3-venv \
-          python3-setuptools \
-          file \
-          libelf-dev \
-          ecj \
-          fastjar \
-          java-propose-classpath \
-          automake \
-          autoconf \
-          libtool \
-          quilt \
-          pkg-config \
-          libusb-1.0-0-dev \
-          cmake \
-          gcc-multilib \
-          g++-multilib
-        sudo apt-get -qq autoremove --purge
-        sudo apt-get -qq clean
-        sudo timedatectl set-timezone "Asia/Shanghai"
-        df -h
-        free -h
+        sudo apt-get -qq install -y build-essential libncurses5-dev zlib1g-dev gawk git gettext libssl-dev xsltproc wget unzip python3 python3-venv python3-setuptools file libelf-dev automake autoconf libtool pkg-config cmake
+        sudo apt-get -qq autoremove --purge && sudo apt-get -qq clean
+        sudo rm -rf /home/runner/work/build-openwrt/*
 
-    - name: Clone OpenWRT source code
+    - name: 克隆源码并编译主机工具（关键！不加载任何目标架构配置）
       run: |
-        git clone --depth 1 --branch ${OPENWRT_VERSION} https://github.com/openwrt/openwrt openwrt
+        # 克隆源码
+        git clone --depth 1 --branch v24.10.4 https://github.com/openwrt/openwrt openwrt
         cd openwrt
-        ./scripts/feeds update -a
-        ./scripts/feeds install -a
+        # 只更新feeds，不生成任何.config
+        ./scripts/feeds update -a && ./scripts/feeds install -a
+        # 直接编译所有主机工具（此时无任何目标架构变量干扰）
+        make tools/compile -j1 V=s
 
-    - name: Build config tools (conf) FIRST
+    - name: 生成目标配置并添加插件（此时工具已编译完成，无干扰）
       run: |
         cd openwrt
-        echo "Building config tool (scripts/config/conf) with clean environment..."
-        env -i PATH="$PATH" make -j1 scripts/config/conf V=s || { echo "Failed to build config tool!"; exit 1; }
-
-    - name: Load custom configuration
-      run: |
-        cd openwrt
-        if [ -f "../${CUSTOM_CONFIG_FILE}" ]; then
-          echo "Found custom config file, copying it."
-          cp "../${CUSTOM_CONFIG_FILE}" .config
-        else
-          echo "No custom config file found, generating default config for ${TARGET_ARCH}."
-          make defconfig
-        fi
-
-    - name: Update and install package selections
-      run: |
-        cd openwrt
-        
-        # 定义要安装的插件列表
-        # !! 重要：移除所有注释和空行，确保每个元素都是有效的包名 !!
-        PACKAGES="\
-        luci-app-adguardhome \
-        luci-app-attendedsysupgrade \
-        luci-app-autoupdate \
-        luci-app-control-webrestriction \
-        luci-app-control-weburl \
-        luci-app-ddns-go \
-        luci-app-firewall \
-        luci-app-lucky \
-        luci-app-netdata \
-        luci-app-openclash \
-        luci-app-package-manager \
-        luci-app-passwall \
-        luci-app-smartdns \
-        luci-app-ttyd \
-        luci-app-turboacc \
-        luci-app-upnp \
-        luci-app-vsftpd \
-        luci-app-wol \
-        luci-app-zerotier \
-        luci-theme-argon \
-        luci-i18n-base-zh-cn \
-        luci-i18n-adguardhome-zh-cn \
-        luci-i18n-attendedsysupgrade-zh-cn \
-        luci-i18n-autoupdate-zh-cn \
-        luci-i18n-control-webrestriction-zh-cn \
-        luci-i18n-control-weburl-zh-cn \
-        luci-i18n-ddns-go-zh-cn \
-        luci-i18n-firewall-zh-cn \
-        luci-i18n-lucky-zh-cn \
-        luci-i18n-netdata-zh-cn \
-        luci-i18n-openclash-zh-cn \
-        luci-i18n-package-manager-zh-cn \
-        luci-i18n-passwall-zh-cn \
-        luci-i18n-smartdns-zh-cn \
-        luci-i18n-ttyd-zh-cn \
-        luci-i18n-turboacc-zh-cn \
-        luci-i18n-upnp-zh-cn \
-        luci-i18n-vsftpd-zh-cn \
-        luci-i18n-wol-zh-cn \
-        luci-i18n-zerotier-zh-cn \
-        libpam \
-        libtirpc \
-        lzma \
-        net-snmp \
-        "
-        
-        # 将插件添加到配置文件中
-        for pkg in $PACKAGES; do
-          # 过滤掉可能的空行（如果有的话）
-          [ -z "$pkg" ] && continue
-          echo "CONFIG_PACKAGE_$pkg=y" >> .config
-        done
-        
-        # 确保中文语言包被选中
+        # 生成x86_64默认配置
+        make defconfig
+        # 插件列表（纯数组，无任何语法错误）
+        PACKAGES=(
+          luci-app-adguardhome luci-app-attendedsysupgrade luci-app-autoupdate
+          luci-app-control-webrestriction luci-app-control-weburl luci-app-ddns-go
+          luci-app-firewall luci-app-lucky luci-app-netdata luci-app-openclash
+          luci-app-package-manager luci-app-passwall luci-app-smartdns luci-app-ttyd
+          luci-app-turboacc luci-app-upnp luci-app-vsftpd luci-app-wol luci-app-zerotier
+          luci-theme-argon luci-i18n-base-zh-cn luci-i18n-adguardhome-zh-cn
+          luci-i18n-attendedsysupgrade-zh-cn luci-i18n-autoupdate-zh-cn
+          luci-i18n-control-webrestriction-zh-cn luci-i18n-control-weburl-zh-cn
+          luci-i18n-ddns-go-zh-cn luci-i18n-firewall-zh-cn luci-i18n-lucky-zh-cn
+          luci-i18n-netdata-zh-cn luci-i18n-openclash-zh-cn luci-i18n-package-manager-zh-cn
+          luci-i18n-passwall-zh-cn luci-i18n-smartdns-zh-cn luci-i18n-ttyd-zh-cn
+          luci-i18n-turboacc-zh-cn luci-i18n-upnp-zh-cn luci-i18n-vsftpd-zh-cn
+          luci-i18n-wol-zh-cn luci-i18n-zerotier-zh-cn libpam libtirpc lzma net-snmp
+        )
+        # 添加插件到配置
+        for pkg in "${PACKAGES[@]}"; do echo "CONFIG_PACKAGE_$pkg=y" >> .config; done
         echo "CONFIG_LUCI_LANG_zh-cn=y" >> .config
-
-    - name: Update configuration with defconfig
-      run: |
-        cd openwrt
-        echo "Updating configuration with defconfig..."
+        # 更新配置依赖
         make defconfig V=s
 
-    - name: Download package sources (with zstd cleanup)
+    - name: 下载源码包
       run: |
         cd openwrt
-        rm -f dl/zstd-1.5.7.tar.gz*
         make download -j$(nproc)
-        if [ ! -f "dl/zstd-1.5.7.tar.gz" ]; then
-          echo "zstd source package download failed!"
-          exit 1
-        fi
-        find dl -size -1024c -delete
+        # 检查zstd包是否完整
+        [ -f "dl/zstd-1.5.7.tar.gz" ] || { echo "zstd下载失败！"; exit 1; }
 
-    - name: Compile tools (zstd first, single-thread)
+    - name: 编译固件（单线程最稳定）
       run: |
         cd openwrt
-        echo "Compiling tools (zstd first with single thread)..."
-        make tools/zstd/compile -j1 V=s || { echo "Failed to compile zstd!"; exit 1; }
-        make tools/compile -j$(nproc) V=s
+        echo "开始编译，预计1-3小时..."
+        make -j1 V=s
 
-    - name: Compile firmware
-      run: |
-        cd openwrt
-        echo "开始编译固件，这可能需要很长时间..."
-        make -j$(nproc) || make -j1 V=s
-
-    - name: Upload compiled firmware
+    - name: 上传固件
       uses: actions/upload-artifact@v4
       with:
-        name: openwrt-firmware-${{ env.TARGET_ARCH }}-${{ env.OPENWRT_VERSION }}
+        name: openwrt-x86_64-24.10.4-final
         path: openwrt/bin/targets/**/*.bin
         if-no-files-found: error
