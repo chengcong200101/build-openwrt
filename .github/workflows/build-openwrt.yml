@@ -32,7 +32,7 @@ jobs:
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
-        # 更新并安装依赖，增加了几个可能缺失的基础包
+        # 更新并安装依赖，将 python3-distutils 替换为 python3-venv
         sudo apt-get -qq update
         sudo apt-get -qq install -y \
           build-essential \
@@ -47,7 +47,7 @@ jobs:
           wget \
           unzip \
           python3 \
-          python3-distutils \
+          python3-venv \
           python3-setuptools \
           file \
           libelf-dev \
