@@ -25,14 +25,12 @@ jobs:
 
     - name: Cleanup workspace
       run: |
-        # 清理工作区，防止旧文件干扰
         sudo rm -rf * .* || true
 
     - name: Initialization environment
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
-        # 更新并安装依赖，将 python3-distutils 替换为 python3-venv
         sudo apt-get -qq update
         sudo apt-get -qq install -y \
           build-essential \
@@ -68,7 +66,6 @@ jobs:
 
     - name: Clone OpenWRT source code
       run: |
-        # 克隆源码并更新 feeds
         git clone --depth 1 --branch ${OPENWRT_VERSION} https://github.com/openwrt/openwrt openwrt
         cd openwrt
         ./scripts/feeds update -a
@@ -77,17 +74,14 @@ jobs:
     - name: Load custom configuration
       run: |
         cd openwrt
-        # 如果存在自定义配置文件，则使用它
         if [ -f "../${CUSTOM_CONFIG_FILE}" ]; then
           echo "Found custom config file, copying it."
           cp "../${CUSTOM_CONFIG_FILE}" .config
         else
           echo "No custom config file found, generating default config for ${TARGET_ARCH}."
-          # 为目标架构生成一个默认配置
+          # 仅生成目标架构的基础配置，不干扰主机工具编译
           echo "CONFIG_TARGET_${TARGET_ARCH}=y" > .config
-          # 选择第一个子目标（通常是 generic）
           echo "CONFIG_TARGET_${TARGET_ARCH}_generic=y" >> .config
-          # 选择一个默认的固件类型，这里以 ext4 为例
           echo "CONFIG_TARGET_${TARGET_ARCH}_generic_DEVICE_generic-ext4=y" >> .config
         fi
 
@@ -95,7 +89,6 @@ jobs:
       run: |
         cd openwrt
         
-        # 定义要安装的插件列表
         PACKAGES="\
         luci-app-adguardhome \
         luci-app-attendedsysupgrade \
@@ -139,23 +132,20 @@ jobs:
         luci-i18n-zerotier-zh-cn \
         "
         
-        # 将插件添加到配置文件中
         for pkg in $PACKAGES; do
           echo "CONFIG_PACKAGE_$pkg=y" >> .config
         done
         
-        # 确保中文语言包被选中
         echo "CONFIG_LUCI_LANG_zh-cn=y" >> .config
 
     - name: Build config tools and update config
       run: |
         cd openwrt
         echo "Building config tools (scripts/config/conf)..."
-        # 首先单独编译配置工具，使用 -j1 避免并行问题
-        make -j1 scripts/config/conf V=s || { echo "Failed to build config tool!"; exit 1; }
+        # 关键修正：清空 ARCH 环境变量，避免目标架构干扰主机工具编译
+        make -j1 scripts/config/conf ARCH= V=s || { echo "Failed to build config tool!"; exit 1; }
         
         echo "Updating configuration..."
-        # 然后再运行 defconfig 来处理依赖关系
         make defconfig V=s
 
     - name: Download package sources
