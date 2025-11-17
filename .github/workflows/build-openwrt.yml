@@ -5,11 +5,11 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
-  workflow_dispatch:  # 重要：允许手动触发
+  workflow_dispatch:  # 手动触发
 
 jobs:
   build:
-    runs-on: ubuntu-latest  # 使用最新版本
+    runs-on: ubuntu-latest
     
     steps:
     - name: Checkout repository
@@ -39,7 +39,6 @@ jobs:
         wget -q https://downloads.openwrt.org/releases/22.03.5/targets/x86/64/openwrt-sdk-22.03.5-x86-64_gcc-11.2.0_musl.Linux-x86_64.tar.xz
         tar -xf openwrt-sdk-*.tar.xz
         mv openwrt-sdk-* openwrt
-        cd openwrt
         
     - name: Setup feeds
       run: |
