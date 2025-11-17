@@ -20,11 +20,20 @@ jobs:
         sudo apt-get install -y libssl-dev zlib1g-dev unzip rsync
         sudo apt-get install -y gawk gettext libncurses5-dev
         
-    - name: Download OpenWrt SDK
+    - name: Download and setup OpenWrt
       run: |
+        # 下载 SDK
         wget -q https://downloads.openwrt.org/releases/22.03.5/targets/x86/64/openwrt-sdk-22.03.5-x86-64_gcc-11.2.0_musl.Linux-x86_64.tar.xz
+        
+        # 解压并重命名（修复 mv 错误）
         tar -xf openwrt-sdk-*.tar.xz
-        mv openwrt-sdk-* openwrt
+        
+        # 列出解压后的目录，找到正确的目录名
+        ls -la
+        SDK_DIR=$(find . -maxdepth 1 -type d -name "openwrt-sdk-*" | head -1)
+        echo "Found SDK directory: $SDK_DIR"
+        mv "$SDK_DIR" openwrt
+        
         cd openwrt
         
     - name: Add custom feeds
@@ -71,11 +80,11 @@ jobs:
       run: |
         cd openwrt
         make defconfig
-        make -j2 download
-        make -j2
+        make -j2 download || make -j1 download
+        make -j2 || make -j1 V=s
         
     - name: Upload firmware
       uses: actions/upload-artifact@v4
       with:
         name: openwrt-full-plugins
-        path: openwrt/bin/targets/x86/64/
+        path: openwrt/bin/targets/
