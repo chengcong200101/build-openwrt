@@ -1,9 +1,7 @@
-name: Build OpenWrt 22.03
+name: Build OpenWrt 22.03 with All Plugins
 
 on:
   push:
-    branches: [main]
-  pull_request:
     branches: [main]
   workflow_dispatch:
 
@@ -15,37 +13,37 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
       
-    - name: Setup environment
+    - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y build-essential ccache file gawk gettext git
-        sudo apt-get install -y libncurses5-dev libssl-dev python3 python3-distutils
-        sudo apt-get install -y rsync unzip wget zlib1g-dev
+        sudo apt-get install -y build-essential git wget
+        sudo apt-get install -y libssl-dev zlib1g-dev unzip rsync
+        sudo apt-get install -y gawk gettext libncurses5-dev
         
-    - name: Download OpenWrt 22.03
+    - name: Download OpenWrt SDK
       run: |
         wget -q https://downloads.openwrt.org/releases/22.03.5/targets/x86/64/openwrt-sdk-22.03.5-x86-64_gcc-11.2.0_musl.Linux-x86_64.tar.xz
         tar -xf openwrt-sdk-*.tar.xz
         mv openwrt-sdk-* openwrt
+        cd openwrt
         
-    - name: Setup feeds
+    - name: Add custom feeds
       run: |
         cd openwrt
         echo "src-git argon https://github.com/jerrykuku/luci-theme-argon.git" >> feeds.conf.default
         echo "src-git passwall https://github.com/xiaorouji/openwrt-passwall.git" >> feeds.conf.default
         echo "src-git openclash https://github.com/vernesong/OpenClash.git" >> feeds.conf.default
-        echo "src-git smartdns https://github.com/pymumu/smartdns.git" >> feeds.conf.default
-        echo "src-git adguardhome https://github.com/rufengsuixing/luci-app-adguardhome.git" >> feeds.conf.default
-        
         ./scripts/feeds update -a
         ./scripts/feeds install -a
         
     - name: Configure build
       run: |
         cd openwrt
-        # 使用简单的echo命令创建配置文件，避免多行字符串问题
+        # 基础配置
         echo "CONFIG_TARGET_x86_64=y" > .config
         echo "CONFIG_TARGET_x86_64_DEVICE_generic=y" >> .config
+        
+        # LuCI 基础
         echo "CONFIG_PACKAGE_luci=y" >> .config
         echo "CONFIG_PACKAGE_luci-ssl=y" >> .config
         echo "CONFIG_LUCI_LANG_zh-cn=y" >> .config
@@ -65,22 +63,19 @@ jobs:
         echo "CONFIG_PACKAGE_luci-theme-argon=y" >> .config
         echo "CONFIG_PACKAGE_luci-app-openclash=y" >> .config
         echo "CONFIG_PACKAGE_luci-app-passwall=y" >> .config
-        echo "CONFIG_PACKAGE_luci-app-smartdns=y" >> .config
         
         # 中文语言包
         echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y" >> .config
-        echo "CONFIG_PACKAGE_luci-i18n-firewall-zh-cn=y" >> .config
-        echo "CONFIG_PACKAGE_luci-i18n-upnp-zh-cn=y" >> .config
         
     - name: Build firmware
       run: |
         cd openwrt
+        make defconfig
         make -j2 download
         make -j2
         
-    - name: Upload artifacts
+    - name: Upload firmware
       uses: actions/upload-artifact@v4
       with:
-        name: openwrt-firmware
-        path: openwrt/bin/targets/
-        retention-days: 7
+        name: openwrt-full-plugins
+        path: openwrt/bin/targets/x86/64/
