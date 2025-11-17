@@ -9,12 +9,8 @@ on:
   workflow_dispatch:
 
 env:
-  # 定义 OpenWRT 版本和目标架构
   OPENWRT_VERSION: "v24.10.4"
-  # 请根据你的设备型号修改目标架构和配置文件
-  # 例如: x86_64, armvirt-32, armvirt-64, mipsel_24kc, etc.
   TARGET_ARCH: "x86_64"
-  # 如果你有自定义的 .config 文件，可以放在仓库根目录并修改下面的路径
   CUSTOM_CONFIG_FILE: ".config"
 
 jobs:
@@ -27,20 +23,52 @@ jobs:
       with:
         fetch-depth: 1
 
+    - name: Cleanup workspace
+      run: |
+        # 清理工作区，防止旧文件干扰
+        sudo rm -rf * .* || true
+
     - name: Initialization environment
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
-        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc
-        sudo -E apt-get -qq update
-        sudo -E apt-get -qq install $(curl -fsSL https://raw.githubusercontent.com/openwrt/openwrt/${OPENWRT_VERSION}/scripts/feeds | grep -E '^ *apt-get install' | awk '{print $3}' | sort -u)
-        sudo -E apt-get -qq autoremove --purge
-        sudo -E apt-get -qq clean
+        # 更新并安装依赖，增加了几个可能缺失的基础包
+        sudo apt-get -qq update
+        sudo apt-get -qq install -y \
+          build-essential \
+          libncurses5-dev \
+          libncursesw5-dev \
+          zlib1g-dev \
+          gawk \
+          git \
+          gettext \
+          libssl-dev \
+          xsltproc \
+          wget \
+          unzip \
+          python3 \
+          python3-distutils \
+          python3-setuptools \
+          file \
+          libelf-dev \
+          ecj \
+          fastjar \
+          java-propose-classpath \
+          automake \
+          autoconf \
+          libtool \
+          quilt \
+          pkg-config \
+          libusb-1.0-0-dev
+        sudo apt-get -qq autoremove --purge
+        sudo apt-get -qq clean
         sudo timedatectl set-timezone "Asia/Shanghai"
         df -h
+        free -h
 
     - name: Clone OpenWRT source code
       run: |
+        # 克隆源码并更新 feeds
         git clone --depth 1 --branch ${OPENWRT_VERSION} https://github.com/openwrt/openwrt openwrt
         cd openwrt
         ./scripts/feeds update -a
@@ -51,13 +79,19 @@ jobs:
         cd openwrt
         # 如果存在自定义配置文件，则使用它
         if [ -f "../${CUSTOM_CONFIG_FILE}" ]; then
+          echo "Found custom config file, copying it."
           cp "../${CUSTOM_CONFIG_FILE}" .config
         else
-          # 否则，根据目标架构生成一个默认配置
-          make defconfig
+          echo "No custom config file found, generating default config for ${TARGET_ARCH}."
+          # 为目标架构生成一个默认配置
+          echo "CONFIG_TARGET_${TARGET_ARCH}=y" > .config
+          # 选择第一个子目标（通常是 generic）
+          echo "CONFIG_TARGET_${TARGET_ARCH}_generic=y" >> .config
+          # 选择一个默认的固件类型，这里以 ext4 为例
+          echo "CONFIG_TARGET_${TARGET_ARCH}_generic_DEVICE_generic-ext4=y" >> .config
         fi
 
-    - name: Install custom packages
+    - name: Update and install package selections
       run: |
         cd openwrt
         
@@ -112,9 +146,17 @@ jobs:
         
         # 确保中文语言包被选中
         echo "CONFIG_LUCI_LANG_zh-cn=y" >> .config
+
+    - name: Build config tools and update config
+      run: |
+        cd openwrt
+        echo "Building config tools (scripts/config/conf)..."
+        # 首先单独编译配置工具，使用 -j1 避免并行问题
+        make -j1 scripts/config/conf V=s || { echo "Failed to build config tool!"; exit 1; }
         
-        # 更新配置
-        make defconfig
+        echo "Updating configuration..."
+        # 然后再运行 defconfig 来处理依赖关系
+        make defconfig V=s
 
     - name: Download package sources
       run: |
