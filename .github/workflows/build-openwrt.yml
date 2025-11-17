@@ -1,0 +1,136 @@
+name: Build OpenWRT 24.10.4 with Custom Packages
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/build-openwrt.yml'
+  pull_request:
+  workflow_dispatch:
+
+env:
+  # 定义 OpenWRT 版本和目标架构
+  OPENWRT_VERSION: "v24.10.4"
+  # 请根据你的设备型号修改目标架构和配置文件
+  # 例如: x86_64, armvirt-32, armvirt-64, mipsel_24kc, etc.
+  TARGET_ARCH: "x86_64"
+  # 如果你有自定义的 .config 文件，可以放在仓库根目录并修改下面的路径
+  CUSTOM_CONFIG_FILE: ".config"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 1
+
+    - name: Initialization environment
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc
+        sudo -E apt-get -qq update
+        sudo -E apt-get -qq install $(curl -fsSL https://raw.githubusercontent.com/openwrt/openwrt/${OPENWRT_VERSION}/scripts/feeds | grep -E '^ *apt-get install' | awk '{print $3}' | sort -u)
+        sudo -E apt-get -qq autoremove --purge
+        sudo -E apt-get -qq clean
+        sudo timedatectl set-timezone "Asia/Shanghai"
+        df -h
+
+    - name: Clone OpenWRT source code
+      run: |
+        git clone --depth 1 --branch ${OPENWRT_VERSION} https://github.com/openwrt/openwrt openwrt
+        cd openwrt
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
+
+    - name: Load custom configuration
+      run: |
+        cd openwrt
+        # 如果存在自定义配置文件，则使用它
+        if [ -f "../${CUSTOM_CONFIG_FILE}" ]; then
+          cp "../${CUSTOM_CONFIG_FILE}" .config
+        else
+          # 否则，根据目标架构生成一个默认配置
+          make defconfig
+        fi
+
+    - name: Install custom packages
+      run: |
+        cd openwrt
+        
+        # 定义要安装的插件列表
+        PACKAGES="\
+        luci-app-adguardhome \
+        luci-app-attendedsysupgrade \
+        luci-app-autoupdate \
+        luci-app-control-webrestriction \
+        luci-app-control-weburl \
+        luci-app-ddns-go \
+        luci-app-firewall \
+        luci-app-lucky \
+        luci-app-netdata \
+        luci-app-openclash \
+        luci-app-package-manager \
+        luci-app-passwall \
+        luci-app-smartdns \
+        luci-app-ttyd \
+        luci-app-turboacc \
+        luci-app-upnp \
+        luci-app-vsftpd \
+        luci-app-wol \
+        luci-app-zerotier \
+        luci-theme-argon \
+        luci-i18n-base-zh-cn \
+        luci-i18n-adguardhome-zh-cn \
+        luci-i18n-attendedsysupgrade-zh-cn \
+        luci-i18n-autoupdate-zh-cn \
+        luci-i18n-control-webrestriction-zh-cn \
+        luci-i18n-control-weburl-zh-cn \
+        luci-i18n-ddns-go-zh-cn \
+        luci-i18n-firewall-zh-cn \
+        luci-i18n-lucky-zh-cn \
+        luci-i18n-netdata-zh-cn \
+        luci-i18n-openclash-zh-cn \
+        luci-i18n-package-manager-zh-cn \
+        luci-i18n-passwall-zh-cn \
+        luci-i18n-smartdns-zh-cn \
+        luci-i18n-ttyd-zh-cn \
+        luci-i18n-turboacc-zh-cn \
+        luci-i18n-upnp-zh-cn \
+        luci-i18n-vsftpd-zh-cn \
+        luci-i18n-wol-zh-cn \
+        luci-i18n-zerotier-zh-cn \
+        "
+        
+        # 将插件添加到配置文件中
+        for pkg in $PACKAGES; do
+          echo "CONFIG_PACKAGE_$pkg=y" >> .config
+        done
+        
+        # 确保中文语言包被选中
+        echo "CONFIG_LUCI_LANG_zh-cn=y" >> .config
+        
+        # 更新配置
+        make defconfig
+
+    - name: Download package sources
+      run: |
+        cd openwrt
+        make download -j$(nproc)
+        find dl -size -1024c -delete
+
+    - name: Compile firmware
+      run: |
+        cd openwrt
+        echo "开始编译，这可能需要很长时间..."
+        make -j$(nproc) || make -j1 V=s
+
+    - name: Upload compiled firmware
+      uses: actions/upload-artifact@v4
+      with:
+        name: openwrt-firmware-${{ env.TARGET_ARCH }}-${{ env.OPENWRT_VERSION }}
+        path: openwrt/bin/targets/**/*.bin
+        if-no-files-found: error
