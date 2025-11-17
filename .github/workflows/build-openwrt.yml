@@ -59,8 +59,8 @@ jobs:
           quilt \
           pkg-config \
           libusb-1.0-0-dev \
-          cmake \  # 新增：zstd 可能依赖 cmake 构建
-          gcc-multilib \  # 新增：兼容 32/64 位编译
+          cmake \
+          gcc-multilib \
           g++-multilib
         sudo apt-get -qq autoremove --purge
         sudo apt-get -qq clean
