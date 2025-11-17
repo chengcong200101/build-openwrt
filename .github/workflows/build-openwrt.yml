@@ -71,6 +71,14 @@ jobs:
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
+    - name: Build config tools (conf) FIRST
+      run: |
+        cd openwrt
+        echo "Building config tool (scripts/config/conf) with clean environment..."
+        # 关键：彻底清理环境变量，确保无 ARCH/TARGET_ARCH 干扰
+        # env -i 清空所有环境变量，仅保留 PATH 和必要变量
+        env -i PATH="$PATH" make -j1 scripts/config/conf V=s || { echo "Failed to build config tool!"; exit 1; }
+
     - name: Load custom configuration
       run: |
         cd openwrt
@@ -79,10 +87,8 @@ jobs:
           cp "../${CUSTOM_CONFIG_FILE}" .config
         else
           echo "No custom config file found, generating default config for ${TARGET_ARCH}."
-          # 仅生成目标架构的基础配置，不干扰主机工具编译
-          echo "CONFIG_TARGET_${TARGET_ARCH}=y" > .config
-          echo "CONFIG_TARGET_${TARGET_ARCH}_generic=y" >> .config
-          echo "CONFIG_TARGET_${TARGET_ARCH}_generic_DEVICE_generic-ext4=y" >> .config
+          # 此时 conf 已编译完成，可正常生成目标架构配置
+          make defconfig
         fi
 
     - name: Update and install package selections
@@ -138,14 +144,10 @@ jobs:
         
         echo "CONFIG_LUCI_LANG_zh-cn=y" >> .config
 
-    - name: Build config tools and update config
+    - name: Update configuration with defconfig
       run: |
         cd openwrt
-        echo "Building config tools (scripts/config/conf)..."
-        # 关键修正：清空 ARCH 环境变量，避免目标架构干扰主机工具编译
-        make -j1 scripts/config/conf ARCH= V=s || { echo "Failed to build config tool!"; exit 1; }
-        
-        echo "Updating configuration..."
+        echo "Updating configuration with defconfig..."
         make defconfig V=s
 
     - name: Download package sources
