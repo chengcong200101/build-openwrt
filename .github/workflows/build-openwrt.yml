@@ -1,87 +1,94 @@
-# .github/workflows/build.yml
-name: Build OpenWrt 22.03 with All Plugins
+name: Build OpenWrt 22.03
 
 on:
   push:
-    branches: [main]
-  workflow_dispatch:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:  # 重要：允许手动触发
 
 jobs:
   build:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest  # 使用最新版本
     
     steps:
-    - name: Checkout
-      uses: actions/checkout@v3
+    - name: Checkout repository
+      uses: actions/checkout@v4
       
-    - name: Build OpenWrt 22.03
+    - name: Setup environment
       run: |
-        # 安装依赖
-        sudo apt update && sudo apt install -y build-essential ccache git libssl-dev python2.7 unzip wget
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          ccache \
+          file \
+          gawk \
+          gettext \
+          git \
+          libncurses5-dev \
+          libssl-dev \
+          python3 \
+          python3-distutils \
+          rsync \
+          unzip \
+          wget \
+          zlib1g-dev
         
-        # 下载 22.03.5 源码
-        wget https://downloads.openwrt.org/releases/22.03.5/targets/x86/64/openwrt-sdk-22.03.5-x86-64_gcc-11.2.0_musl.Linux-x86_64.tar.xz
+    - name: Download OpenWrt 22.03
+      run: |
+        wget -q https://downloads.openwrt.org/releases/22.03.5/targets/x86/64/openwrt-sdk-22.03.5-x86-64_gcc-11.2.0_musl.Linux-x86_64.tar.xz
         tar -xf openwrt-sdk-*.tar.xz
         mv openwrt-sdk-* openwrt
         cd openwrt
         
-        # 添加第三方源
-        cat >> feeds.conf.default << 'EOF'
-        src-git argon https://github.com/jerrykuku/luci-theme-argon.git
-        src-git passwall https://github.com/xiaorouji/openwrt-passwall.git;main
-        src-git openclash https://github.com/vernesong/OpenClash.git
-        src-git smartdns https://github.com/pymumu/smartdns.git
-        src-git adguardhome https://github.com/rufengsuixing/luci-app-adguardhome.git
-        src-git lucky https://github.com/sirpdboy/luci-app-lucky.git
-        src-git turboacc https://github.com/chenmozhijin/turboacc.git
-        EOF
+    - name: Setup feeds
+      run: |
+        cd openwrt
+        echo "src-git argon https://github.com/jerrykuku/luci-theme-argon.git" >> feeds.conf.default
+        echo "src-git passwall https://github.com/xiaorouji/openwrt-passwall.git" >> feeds.conf.default
+        echo "src-git openclash https://github.com/vernesong/OpenClash.git" >> feeds.conf.default
         
-        # 更新 feeds
         ./scripts/feeds update -a
         ./scripts/feeds install -a
         
-        # 生成配置
+    - name: Configure build
+      run: |
+        cd openwrt
         cat > .config << 'EOF'
-        CONFIG_TARGET_x86_64=y
-        CONFIG_TARGET_x86_64_DEVICE_generic=y
+CONFIG_TARGET_x86_64=y
+CONFIG_TARGET_x86_64_DEVICE_generic=y
+CONFIG_PACKAGE_luci=y
+CONFIG_PACKAGE_luci-ssl=y
+CONFIG_LUCI_LANG_zh-cn=y
+
+# 核心插件
+CONFIG_PACKAGE_luci-app-firewall=y
+CONFIG_PACKAGE_luci-app-upnp=y
+CONFIG_PACKAGE_luci-app-wol=y
+CONFIG_PACKAGE_luci-app-ttyd=y
+CONFIG_PACKAGE_luci-app-zerotier=y
+CONFIG_PACKAGE_luci-app-attendedsysupgrade=y
+CONFIG_PACKAGE_luci-app-autoupdate=y
+CONFIG_PACKAGE_luci-app-vsftpd=y
+
+# 第三方插件
+CONFIG_PACKAGE_luci-theme-argon=y
+CONFIG_PACKAGE_luci-app-openclash=y
+CONFIG_PACKAGE_luci-app-passwall=y
+
+# 中文
+CONFIG_PACKAGE_luci-i18n-base-zh-cn=y
+EOF
         
-        # 基础系统
-        CONFIG_PACKAGE_luci=y
-        CONFIG_PACKAGE_luci-ssl=y
-        CONFIG_LUCI_LANG_zh-cn=y
+    - name: Build firmware
+      run: |
+        cd openwrt
+        make -j$(nproc) download
+        make -j$(($(nproc) + 1)) || make -j1 V=s
         
-        # 官方插件
-        CONFIG_PACKAGE_luci-app-attendedsysupgrade=y
-        CONFIG_PACKAGE_luci-app-autoupdate=y
-        CONFIG_PACKAGE_luci-app-firewall=y
-        CONFIG_PACKAGE_luci-app-upnp=y
-        CONFIG_PACKAGE_luci-app-wol=y
-        CONFIG_PACKAGE_luci-app-ttyd=y
-        CONFIG_PACKAGE_luci-app-vsftpd=y
-        CONFIG_PACKAGE_luci-app-zerotier=y
-        
-        # 第三方插件
-        CONFIG_PACKAGE_luci-theme-argon=y
-        CONFIG_PACKAGE_luci-app-adguardhome=y
-        CONFIG_PACKAGE_luci-app-ddns-go=y
-        CONFIG_PACKAGE_luci-app-lucky=y
-        CONFIG_PACKAGE_luci-app-netdata=y
-        CONFIG_PACKAGE_luci-app-openclash=y
-        CONFIG_PACKAGE_luci-app-passwall=y
-        CONFIG_PACKAGE_luci-app-smartdns=y
-        CONFIG_PACKAGE_luci-app-turboacc=y
-        
-        # 中文语言包
-        CONFIG_PACKAGE_luci-i18n-base-zh-cn=y
-        CONFIG_PACKAGE_luci-i18n-firewall-zh-cn=y
-        CONFIG_PACKAGE_luci-i18n-upnp-zh-cn=y
-        EOF
-        
-        # 编译
-        make -j$(nproc) || make -j1 V=s
-        
-    - name: Upload Firmware
-      uses: actions/upload-artifact@v3
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
       with:
-        name: openwrt-22.03-full-plugins
+        name: openwrt-firmware
         path: openwrt/bin/targets/
+        retention-days: 7
