@@ -31,7 +31,6 @@ jobs:
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
-        # 补充可能缺失的编译依赖（针对 zstd 编译）
         sudo apt-get -qq update
         sudo apt-get -qq install -y \
           build-essential \
@@ -96,7 +95,8 @@ jobs:
       run: |
         cd openwrt
         
-        # 包含之前缺失的依赖包
+        # 定义要安装的插件列表
+        # !! 重要：移除所有注释和空行，确保每个元素都是有效的包名 !!
         PACKAGES="\
         luci-app-adguardhome \
         luci-app-attendedsysupgrade \
@@ -138,17 +138,20 @@ jobs:
         luci-i18n-vsftpd-zh-cn \
         luci-i18n-wol-zh-cn \
         luci-i18n-zerotier-zh-cn \
-        # 之前缺失的依赖包
         libpam \
         libtirpc \
         lzma \
         net-snmp \
         "
         
+        # 将插件添加到配置文件中
         for pkg in $PACKAGES; do
+          # 过滤掉可能的空行（如果有的话）
+          [ -z "$pkg" ] && continue
           echo "CONFIG_PACKAGE_$pkg=y" >> .config
         done
         
+        # 确保中文语言包被选中
         echo "CONFIG_LUCI_LANG_zh-cn=y" >> .config
 
     - name: Update configuration with defconfig
@@ -160,11 +163,8 @@ jobs:
     - name: Download package sources (with zstd cleanup)
       run: |
         cd openwrt
-        # 关键：删除可能损坏的 zstd 源码包，强制重新下载
         rm -f dl/zstd-1.5.7.tar.gz*
-        # 重新下载所有源码包（确保 zstd 完整）
         make download -j$(nproc)
-        # 检查下载的 zstd 包是否完整
         if [ ! -f "dl/zstd-1.5.7.tar.gz" ]; then
           echo "zstd source package download failed!"
           exit 1
@@ -175,9 +175,7 @@ jobs:
       run: |
         cd openwrt
         echo "Compiling tools (zstd first with single thread)..."
-        # 关键：单线程编译 zstd，避免并行冲突
         make tools/zstd/compile -j1 V=s || { echo "Failed to compile zstd!"; exit 1; }
-        # 编译剩余工具（仍可用多线程，但若继续失败可改为 -j1）
         make tools/compile -j$(nproc) V=s
 
     - name: Compile firmware
