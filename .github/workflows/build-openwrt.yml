@@ -1,103 +1,175 @@
-name: Build OpenWrt 22.03 with All Plugins
+name: Build-OpenWrt-24.10.4
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
+  push:
+    branches: ["main"]
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-    
+    runs-on: ubuntu-22.04
+
     steps:
-    - name: Checkout repository
+    - name: Checkout
       uses: actions/checkout@v4
-      
-    - name: Install dependencies
+
+    #==============================================================
+    # 1. 初始化构建环境（删除不必要组件，节省空间）
+    #==============================================================
+    - name: Init build env
       run: |
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
         sudo apt-get update
-        sudo apt-get install -y build-essential git wget
-        sudo apt-get install -y libssl-dev zlib1g-dev unzip rsync
-        sudo apt-get install -y gawk gettext libncurses5-dev
-        
-    - name: Download and setup OpenWrt
+        sudo apt-get install -y build-essential clang flex g++ gawk gcc-multilib \
+            gettext git libncurses-dev libssl-dev python3 unzip zlib1g-dev \
+            file wget ccache python3-pip jq
+
+    #==============================================================
+    # 2. 设置 ccache 加速（缓存加速）
+    #==============================================================
+    - name: Setup ccache
+      uses: actions/cache@v4
+      with:
+        path: ~/.ccache
+        key: ${{ runner.os }}-ccache-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-ccache-
+
+    - name: Enable ccache
       run: |
-        wget -q https://downloads.openwrt.org/releases/22.03.5/targets/x86/64/openwrt-sdk-22.03.5-x86-64_gcc-11.2.0_musl.Linux-x86_64.tar.xz
-        tar -xf openwrt-sdk-*.tar.xz
-        SDK_DIR=$(find . -maxdepth 1 -type d -name "openwrt-sdk-*" | head -1)
-        echo "Found SDK directory: $SDK_DIR"
-        mv "$SDK_DIR" openwrt
-        cd openwrt
-        
-    - name: Add custom feeds
+        echo 'export CC="ccache gcc"' >> $GITHUB_ENV
+        echo 'export CXX="ccache g++"' >> $GITHUB_ENV
+        echo 'export CCACHE_DIR=~/.ccache' >> $GITHUB_ENV
+        ccache -M 2G
+
+    #==============================================================
+    # 3. 克隆 OpenWrt 源码（24.10.4）
+    #==============================================================
+    - name: Clone OpenWrt source
+      run: |
+        git clone --depth=1 https://github.com/openwrt/openwrt.git -b v24.10.4 openwrt
+
+    #==============================================================
+    # 4. 下载第三方插件
+    #==============================================================
+    - name: Add extra packages
+      run: |
+        cd openwrt/package
+        git clone --depth=1 https://github.com/gdy666/luci-app-lucky
+        git clone --depth=1 https://github.com/vernesong/OpenClash
+        git clone --depth=1 https://github.com/xiaorouji/openwrt-passwall passwall
+        git clone --depth=1 https://github.com/jerrykuku/luci-theme-argon
+        git clone --depth=1 https://github.com/jerrykuku/luci-app-argon-config
+        git clone --depth=1 https://github.com/sirpdboy/luci-app-ddns-go
+        git clone --depth=1 https://github.com/pymumu/openwrt-smartdns smartdns
+        git clone --depth=1 https://github.com/pymumu/luci-app-smartdns
+
+    #==============================================================
+    # 5. 更新 feeds
+    #==============================================================
+    - name: Update Feeds
       run: |
         cd openwrt
-        echo "src-git argon https://github.com/jerrykuku/luci-theme-argon.git" >> feeds.conf.default
-        echo "src-git passwall https://github.com/xiaorouji/openwrt-passwall.git" >> feeds.conf.default
-        echo "src-git openclash https://github.com/vernesong/OpenClash.git" >> feeds.conf.default
         ./scripts/feeds update -a
         ./scripts/feeds install -a
-        
-    - name: Configure build
+
+    #==============================================================
+    # 6. 导入配置（含裁剪优化）
+    #==============================================================
+    - name: Load .config
       run: |
         cd openwrt
-        # 基础配置
-        echo "CONFIG_TARGET_x86_64=y" > .config
-        echo "CONFIG_TARGET_x86_64_DEVICE_generic=y" >> .config
-        
-        # LuCI 基础
-        echo "CONFIG_PACKAGE_luci=y" >> .config
-        echo "CONFIG_PACKAGE_luci-ssl=y" >> .config
-        echo "CONFIG_LUCI_LANG_zh-cn=y" >> .config
-        
-        # 官方插件
-        echo "CONFIG_PACKAGE_luci-app-adguardhome=y" >> .config
-        echo "CONFIG_PACKAGE_luci-app-attendedsysupgrade=y" >> .config
-        echo "CONFIG_PACKAGE_luci-app-autoupdate=y" >> .config
-        echo "CONFIG_PACKAGE_luci-app-firewall=y" >> .config
-        echo "CONFIG_PACKAGE_luci-app-upnp=y" >> .config
-        echo "CONFIG_PACKAGE_luci-app-wol=y" >> .config
-        echo "CONFIG_PACKAGE_luci-app-ttyd=y" >> .config
-        echo "CONFIG_PACKAGE_luci-app-vsftpd=y" >> .config
-        echo "CONFIG_PACKAGE_luci-app-zerotier=y" >> .config
-        
-        # 第三方插件
-        echo "CONFIG_PACKAGE_luci-theme-argon=y" >> .config
-        echo "CONFIG_PACKAGE_luci-app-openclash=y" >> .config
-        echo "CONFIG_PACKAGE_luci-app-passwall=y" >> .config
-        
-        # 中文语言包
-        echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y" >> .config
-        
-        # 禁用有问题的包
-        echo "CONFIG_PACKAGE_pcapsipdump=n" >> .config
-        
-    - name: Download packages with retry
-      run: |
-        cd openwrt
-        # 第一次尝试下载
-        make -j1 download || true
-        
-        # 清理可能失败的下载
-        find dl -size -1024c -exec rm -f {} \; || true
-        
-        # 第二次尝试下载
-        make -j1 download || true
-        
-        # 显示下载状态
-        echo "Download status:"
-        ls -la dl/ | wc -l
-        echo "files in dl directory"
-        
-    - name: Build firmware
+        cat > .config << "EOF"
+        #-------------------------------
+        #  Platform: x86_64
+        #-------------------------------
+        CONFIG_TARGET_x86=y
+        CONFIG_TARGET_x86_64=y
+        CONFIG_TARGET_x86_64_DEVICE_generic=y
+
+        #-------------------------------
+        #  Plugins
+        #-------------------------------
+        CONFIG_PACKAGE_luci-app-attendedsysupgrade=y
+        CONFIG_PACKAGE_luci-app-autoupdate=y
+        CONFIG_PACKAGE_luci-app-package-manager=y
+
+        CONFIG_PACKAGE_luci-app-smartdns=y
+        CONFIG_PACKAGE_luci-app-ddns-go=y
+        CONFIG_PACKAGE_luci-app-upnp=y
+        CONFIG_PACKAGE_luci-app-vsftpd=y
+        CONFIG_PACKAGE_luci-app-zerotier=y
+
+        CONFIG_PACKAGE_luci-app-firewall=y
+        CONFIG_PACKAGE_luci-app-netdata=y
+        CONFIG_PACKAGE_luci-app-openclash=y
+        CONFIG_PACKAGE_luci-app-passwall=y
+        CONFIG_PACKAGE_luci-app-turboacc=y
+
+        CONFIG_PACKAGE_luci-app-control-webrestriction=y
+        CONFIG_PACKAGE_luci-app-control-weburl=y
+
+        CONFIG_PACKAGE_luci-app-ttyd=y
+        CONFIG_PACKAGE_luci-app-adguardhome=y
+        CONFIG_PACKAGE_luci-app-wol=y
+        CONFIG_PACKAGE_luci-app-lucky=y
+
+        CONFIG_PACKAGE_luci-theme-argon=y
+        CONFIG_PACKAGE_luci-app-argon-config=y
+
+        #-------------------------------
+        #  Language
+        #-------------------------------
+        CONFIG_LUCI_LANG_zh_Hans=y
+
+        #-------------------------------
+        #  Enable ccache
+        #-------------------------------
+        CONFIG_DEVEL=y
+        CONFIG_CCACHE=y
+
+        #-------------------------------
+        #  自动裁剪（精简系统）
+        #-------------------------------
+        CONFIG_STRIP_KERNEL_EXPORTS=y
+        CONFIG_USE_MUSL=y
+        CONFIG_KERNEL_ELF_CORE=y
+
+        CONFIG_BUILD_PATENTED=y
+        CONFIG_PACKAGE_kmod-ppp-nol2tp=y
+        CONFIG_PACKAGE_kmod-tcp-bbr=y
+
+        CONFIG_IMAGEOPT=y
+        CONFIG_IB=y
+
+        # 移除文档以节省空间
+        # CONFIG_BUILD_LOG is not set
+        # CONFIG_KERNEL_KALLSYMS is not set
+        # CONFIG_KERNEL_KALLSYMS_ALL is not set
+
+        EOF
+
+    #==============================================================
+    # 7. defconfig
+    #==============================================================
+    - name: Defconfig
       run: |
         cd openwrt
         make defconfig
-        # 跳过依赖检查，直接构建
-        make -j2 IGNORE_ERRORS=m || make -j1 V=s IGNORE_ERRORS=m
-        
+
+    #==============================================================
+    # 8. 编译
+    #==============================================================
+    - name: Build
+      run: |
+        cd openwrt
+        make -j$(nproc) V=s
+
+    #==============================================================
+    # 9. 上传固件
+    #==============================================================
     - name: Upload firmware
       uses: actions/upload-artifact@v4
       with:
-        name: openwrt-full-plugins
-        path: openwrt/bin/targets/
+        name: OpenWrt-x86_64
+        path: openwrt/bin/targets/x86/64/
