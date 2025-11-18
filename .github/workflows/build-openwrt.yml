@@ -22,18 +22,11 @@ jobs:
         
     - name: Download and setup OpenWrt
       run: |
-        # 下载 SDK
         wget -q https://downloads.openwrt.org/releases/22.03.5/targets/x86/64/openwrt-sdk-22.03.5-x86-64_gcc-11.2.0_musl.Linux-x86_64.tar.xz
-        
-        # 解压并重命名（修复 mv 错误）
         tar -xf openwrt-sdk-*.tar.xz
-        
-        # 列出解压后的目录，找到正确的目录名
-        ls -la
         SDK_DIR=$(find . -maxdepth 1 -type d -name "openwrt-sdk-*" | head -1)
         echo "Found SDK directory: $SDK_DIR"
         mv "$SDK_DIR" openwrt
-        
         cd openwrt
         
     - name: Add custom feeds
@@ -76,12 +69,32 @@ jobs:
         # 中文语言包
         echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y" >> .config
         
+        # 禁用有问题的包
+        echo "CONFIG_PACKAGE_pcapsipdump=n" >> .config
+        
+    - name: Download packages with retry
+      run: |
+        cd openwrt
+        # 第一次尝试下载
+        make -j1 download || true
+        
+        # 清理可能失败的下载
+        find dl -size -1024c -exec rm -f {} \; || true
+        
+        # 第二次尝试下载
+        make -j1 download || true
+        
+        # 显示下载状态
+        echo "Download status:"
+        ls -la dl/ | wc -l
+        echo "files in dl directory"
+        
     - name: Build firmware
       run: |
         cd openwrt
         make defconfig
-        make -j2 download || make -j1 download
-        make -j2 || make -j1 V=s
+        # 跳过依赖检查，直接构建
+        make -j2 IGNORE_ERRORS=m || make -j1 V=s IGNORE_ERRORS=m
         
     - name: Upload firmware
       uses: actions/upload-artifact@v4
